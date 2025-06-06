@@ -48,6 +48,46 @@ class FattreeNet(Topo):
         Topo.__init__(self)
 
         # TODO: please complete the network generation logic here
+        # 1) add all switches
+        count_switches = 0
+        for sw in ft_topo.switches:
+            # switch names must be alphanumeric only
+            hex_dpid = '%016x' % int(sw.id.replace('a','1').replace('e','2').replace('c','3'))  # simple mapper
+            self.addSwitch(sw.id, dpid=hex_dpid)
+            count_switches+=1
+        info(f"Total {count_switches} Switches added\n")
+
+        # 2) add all hosts with their IPs
+        count_host = 0
+        for h in ft_topo.servers:
+            # IP: 10.pod.edge.idx/8
+            ip = f"10.{h.pod}.{h.edge}.{h.idx+2}/8"
+            # info(f"Host with ip: {ip} Added")
+            self.addHost(h.id, ip=ip)
+            count_host+=1
+        info(f"Total {count_host} Hosts added\n")
+
+        # 3) add links for every edge in the graph
+        #    use TCLink with 15 Mbps, 5 ms delay
+        seen = set()
+        count_edge = 0
+        for sw in ft_topo.switches:
+            for edge in sw.edges:
+                n1 = edge.lnode
+                n2 = edge.rnode
+                # build a unique key to avoid duplicate links
+                key = tuple(sorted([n1.id, n2.id]))
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                # all links get same bw/delay
+                self.addLink(n1.id, n2.id,
+                             cls=TCLink,
+                             bw=15,
+                             delay='5ms')
+                count_edge+=1
+
 
 
 def make_mininet_instance(graph_topo):
@@ -75,5 +115,5 @@ def run(graph_topo):
 
 
 if __name__ == '__main__':
-    ft_topo = topo.Fattree(4)
+    ft_topo = Fattree(4)
     run(ft_topo)

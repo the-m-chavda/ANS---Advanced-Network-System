@@ -62,10 +62,58 @@ class Node:
 class Fattree:
 
 	def __init__(self, num_ports):
-		self.servers = []
-		self.switches = []
-		self.generate(num_ports)
+		self.servers = [] # list of Node(type='host')
+		self.switches = []  # list of Node(type in {'core','agg','edge'})
+		self.generate(num_ports) 
 
 	def generate(self, num_ports):
+		pods = k = num_ports
+		half = k // 2
+        
+		# 1) create core switches: arranged in half x half matrix
+		core_switches = []
+		for i in range(half):
+			for j in range(half):
+				nid = f"c{i}{j}"        # e.g. c00, c01, c10, c11 for k=4
+				node = Node(nid, 'core')
+				core_switches.append(node)
+				self.switches.append(node)
 
-		# TODO: code for generating the fat-tree topology
+        # 2) build each pod
+		for p in range(pods):
+            # aggregation and edge in this pod
+			agg_switches = []
+			edge_switches = []
+			for i in range(half):
+				a = Node(f"a{p}{i}", 'agg')    # e.g. a00, a01 in pod 0
+				e = Node(f"e{p}{i}", 'edge')   # e00, e01 in pod 0
+				agg_switches.append(a)
+				edge_switches.append(e)
+				self.switches += [a, e]
+
+            # 2a) connect each edge to each agg in same pod
+			for e in edge_switches:
+				for a in agg_switches:
+					e.add_edge(a)
+
+            # 2b) attach hosts to each edge switch
+            # each edge has half hosts
+			for ei, e in enumerate(edge_switches):
+				for h in range(half):
+					hid = f"h{p}{ei}{h}"   # e.g. h000, h001, h010, h011 for k=4
+					host = Node(hid, 'host')
+                    # store addressing info for later IP assignment
+					host.pod = p
+					host.edge = ei
+					host.idx = h
+					self.servers.append(host)
+					e.add_edge(host)
+
+            # 2c) connect agg switches to core
+            # each agg i connects to one group of core with index i
+			for ai, a in enumerate(agg_switches):
+                # group offset = ai * half
+				for cj in range(half):
+					core_idx = ai * half + cj
+					a.add_edge(core_switches[core_idx])
+
