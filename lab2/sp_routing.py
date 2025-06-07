@@ -63,6 +63,8 @@ class SPRouter(app_manager.RyuApp):
         self.graph = {}                  # Graph: dpid -> {neighbor: out_port}
         self.ip_location = {}            # dpid -> {mac -> port}
         self.mac_location = {}           # mac -> (dpid, port)
+        # self.discovery_started = False
+
 
     # ================= TOPOLOGY DISCOVERY =================
     @set_ev_cls(event.EventSwitchEnter)
@@ -79,7 +81,7 @@ class SPRouter(app_manager.RyuApp):
         link_list = get_link(self, None)
         # logger.info(f"link_list: {link_list}")
         for link in link_list:
-            # logger.info(f"Link: {link}")
+            # logger.info(f"Link: src={link.src.dpid} (port {link.src.port_no}) -> dst={link.dst.dpid} (port {link.dst.port_no})")
             src = link.src.dpid
             dst = link.dst.dpid
             out_port = link.src.port_no
@@ -110,6 +112,10 @@ class SPRouter(app_manager.RyuApp):
     # ================= FLOW TABLE INIT =================
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
+        # Delay LLDP/startup discovery
+        # if not self.discovery_started:
+        #     hub.spawn_after(10, self.start_discovery)  # 5 second delay
+        #     self.discovery_started = True
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -198,10 +204,12 @@ class SPRouter(app_manager.RyuApp):
             src_ip = ip_pkt.src
             dst_ip = ip_pkt.dst
 
+        logger.info(f"dpid: {dpid} src_ip: {src_ip} dst_ip:{dst_ip}")
 
         # Learn location
-        self.ip_location[src_ip] = (dpid, in_port)
-        logger.info(f"dpid: {dpid} src_ip: {src_ip} dst_ip:{dst_ip}")
+        is_src_edge = self.ip_to_edge_dpid(src_ip)
+        if dpid == is_src_edge:
+            self.ip_location[src_ip] = (dpid, in_port)
 
         # Handle ARP
         if arp_pkt or ip_pkt:
@@ -209,12 +217,16 @@ class SPRouter(app_manager.RyuApp):
             dst_edge_dpid = self.ip_to_edge_dpid(dst_ip)
             if dpid == dst_edge_dpid:
                 # all_ports = {1, 2, 3, 4}
-                host_ports = self.get_host_ports(datapath, self.graph)
-
-                broadcast_port = host_ports - {in_port}
+                if dst_ip in self.ip_location:
+                    _, out_port = self.ip_location[dst_ip]
+                    broadcast_ports = {out_port}
+                    logger.info(f"broadcast_ports if- {broadcast_ports}")
+                else:
+                    broadcast_ports = self.get_host_ports(datapath, self.graph) - {in_port}
+                    logger.info(f"broadcast_ports else- {broadcast_ports}") 
 
                 actions = []
-                for port in broadcast_port:
+                for port in broadcast_ports:
                     if port != in_port:  # avoid sending back to uplink
                         actions.append(parser.OFPActionOutput(port))
 
@@ -226,11 +238,11 @@ class SPRouter(app_manager.RyuApp):
                         actions=actions,
                         data=msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
                     )
-                    logger.info(f"Broadcast to end hosts - dpid: {dpid} src_ip: {src_ip} dst_ip: {dst_ip} host_ports: {broadcast_port}")
+                    logger.info(f"Broadcast to end hosts - dpid: {dpid} src_ip: {src_ip} dst_ip: {dst_ip} host_ports: {broadcast_ports}")
                     logger.info(f"Graph: {self.graph}")
                     logger.info(f"ip_location - {self.ip_location}")
-                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=(dst_ip, "255.255.255.0"))
-                    self.add_flow(datapath, 10, match, actions)
+                    # match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=(dst_ip))
+                    # self.add_flow(datapath, 10, match, actions)
                     datapath.send_msg(out)
                     return
 
