@@ -211,12 +211,10 @@ class SPRouter(app_manager.RyuApp):
         if dpid == is_src_edge:
             self.ip_location[src_ip] = (dpid, in_port)
 
-        # Handle ARP
+        # Handle ARP or IP similar
         if arp_pkt or ip_pkt:
-            # self.handle_arp(pkt, dpid, in_port)
             dst_edge_dpid = self.ip_to_edge_dpid(dst_ip)
             if dpid == dst_edge_dpid:
-                # all_ports = {1, 2, 3, 4}
                 if dst_ip in self.ip_location:
                     _, out_port = self.ip_location[dst_ip]
                     broadcast_ports = {out_port}
@@ -241,15 +239,16 @@ class SPRouter(app_manager.RyuApp):
                     logger.info(f"Broadcast to end hosts - dpid: {dpid} src_ip: {src_ip} dst_ip: {dst_ip} host_ports: {broadcast_ports}")
                     logger.info(f"Graph: {self.graph}")
                     logger.info(f"ip_location - {self.ip_location}")
-                    # match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=(dst_ip))
-                    # self.add_flow(datapath, 10, match, actions)
+                    if dst_ip in self.ip_location:
+                        match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=(dst_ip))
+                        self.add_flow(datapath, 10, match, actions)
                     datapath.send_msg(out)
                     return
 
             # Only handle ARP if we can determine the destination switch
             if dst_edge_dpid is not None and dst_edge_dpid in self.graph:
                 path = self.dijkstra(dpid, dst_edge_dpid)
-                logger.info("ARP path %s → %s: %s", dpid, dst_edge_dpid, path)
+                logger.info("pkt path %s → %s: %s", dpid, dst_edge_dpid, path)
 
                 if len(path) >= 2:
                     next_hop = path[1]
@@ -268,38 +267,6 @@ class SPRouter(app_manager.RyuApp):
                     logger.info(f"Graph: {self.graph}")
                     datapath.send_msg(out)
                     return
-
-        # out_port = ofproto.OFPP_FLOOD
-
-        # if dst_mac in self.mac_location:
-        #     dst_dpid, dst_port = self.mac_location[dst_mac]
-        #     path = self.dijkstra(dpid, dst_dpid)
-
-        #     if len(path) >= 2:
-        #         next_hop = path[1]
-        #         out_port = self.graph[dpid][next_hop]
-
-        #         # Install flow for future
-        #         match = parser.OFPMatch(in_port=in_port, eth_dst=dst_mac)
-        #         actions = [parser.OFPActionOutput(out_port)]
-        #         self.add_flow(datapath, 1, match, actions)
-
-        # actions = [parser.OFPActionOutput(out_port)]
-
-        # data = msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
-
-        # out = parser.OFPPacketOut(
-        #     datapath=datapath,
-        #     buffer_id=msg.buffer_id,
-        #     in_port=in_port,
-        #     actions=actions,
-        #     data=data)
-        # datapath.send_msg(out)
-
-    # ============= OPTIONAL ARP LOGGING =================
-    def handle_arp(self, pkt, dpid, in_port):
-        a = pkt.get_protocol(arp.arp)
-        logger.debug("ARP: %s asks %s", a.src_ip, a.dst_ip)
 
     def ip_to_edge_dpid(self, ip_str):
         # Example IP: 10.pod.switch.host
